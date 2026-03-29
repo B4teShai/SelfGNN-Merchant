@@ -1,111 +1,68 @@
-# SelfGNN: Self-Supervised Graph Neural Networks for Sequential Recommendation
+# SelfGNN PyTorch Port
 
-This is the Tensorflow implementation by <a href='https://github.com/LIU-YUXI'>@LIU-YUXI</a> for SelfGNN model proposed in this paper:
+PyTorch implementation of SelfGNN (Self-Supervised Graph Neural Networks for Sequential Recommendation), ported from the [original TensorFlow code](https://github.com/HKUDS/SelfGNN).
 
-> **Self-Supervised Graph Neural Networks for Sequential Recommendation**  
-> Yuxi Liu, Lianghao Xia, Chao Huang\* 
-> *SIGIR2024*
+## Project Structure
 
-\* denotes corresponding author
+```
+selfgnn_pytorch/
+├── config.py          # Hyperparameters (matches original Params.py)
+├── data_handler.py    # Data loading & sampling (matches DataHandler.py)
+├── model.py           # SelfGNN model in PyTorch (matches model.py)
+├── train.py           # Training + evaluation loop
+├── run_yelp.sh        # Run Yelp experiment with original hyperparameters
+├── requirements.txt
+└── Datasets/
+    └── Yelp/
+        ├── trn_mat_time   # Pickled: [overall_mat, sub_mats, time_mat]
+        ├── tst_int        # Pickled: test items per user
+        ├── sequence       # Pickled: user behavior sequences
+        └── test_dict      # Pickled: negative items for evaluation
+```
 
-<p align="center">
-<img src="./SA-GNN-framwork.jpg" alt="SA-GNN" />
-</p>
-
-In this paper, we propose a novel framework called Self-Supervised Graph Neural Network (**SelfGNN**) for sequential recommendation. The **SelfGNN** framework encodes short-term graphs based on time intervals and utilizes Graph Neural Networks (GNNs) to learn short-term collaborative relationships. It captures long-term user and item representations at multiple granularity levels through interval fusion and instance modeling. Importantly, our personalized self-augmented learning structure enhances model robustness by mitigating noise in short-term graphs based on long-term user interests and personal stability. 
-
-## 📝 Environment
-
-You can run the following command to download the codes faster:
+## Setup
 
 ```bash
-git clone https://github.com/HKUDS/SA-GNN.git
+# 1. Install dependencies
+pip install torch numpy scipy
+
+# 2. Copy Yelp dataset from original SelfGNN repo
+#    The dataset files should be in ./Datasets/Yelp/
+cp -r /path/to/original/SelfGNN/Datasets/Yelp ./Datasets/
+
+# 3. Run
+chmod +x run_yelp.sh
+./run_yelp.sh
 ```
 
-Then run the following commands to create a conda environment:
+## Expected Results (Yelp)
+
+From the original SelfGNN paper (Table 2):
+
+| Metric   | HR@10 | NDCG@10 | HR@20 | NDCG@20 |
+|----------|-------|---------|-------|---------|
+| SelfGNN  | 0.365 | 0.201   | 0.509 | 0.237   |
+
+## Key Differences from TF Version
+
+1. **Proper edge dropout**: Original TF code had a subtle bug where edge dropout had no effect (values cast to int32 became 0, and `segment_sum` ignored values). This port implements proper edge dropout.
+
+2. **PyTorch sparse ops**: Uses `torch.sparse.mm` for graph message passing.
+
+3. **Modern PyTorch**: Uses `nn.Module`, `nn.Parameter`, built-in LSTM, and standard training loop.
+
+## Run on Other Datasets
 
 ```bash
-conda create -y -n sagnn python=3.6.12
-conda activate sagnn
-pip install matplotlib==3.5.1
-pip install numpy==1.21.5
-pip install scipy==1.7.3
-pip install tensorflow_gpu==1.14.0
+# Amazon
+python train.py --data amazon --graphNum 5 --gnn_layer 3 --att_layer 4 \
+    --sslNum 80 --ssl_reg 1e-6 --pred_num 0 --pos_length 200
+
+# Gowalla  
+python train.py --data gowalla --graphNum 3 --gnn_layer 2 --att_layer 1 \
+    --lr 2e-3 --sslNum 40 --ssl_reg 1e-6 --ssldim 48
+
+# MovieLens
+python train.py --data movielens --graphNum 6 --gnn_layer 2 --att_layer 3 \
+    --sslNum 90 --ssl_reg 1e-6 --ssldim 48
 ```
-
-## 📚 Recommendation Dataset
-
-We utilized four public datasets to evaluate: *Gowalla, MovieLens,Yelp* and *Amazon*. Following the common settings of implicit feedback, if user  has rated item , then the element  is set as 1, otherwise 0. We filtered out users and items with too few interactions.
-
-We employ the most recent interaction as the test set, the penultimate interaction as the validation set, and the remaining interactions in the user behavior sequence as the training data.
-
-The datasets are in the `./Dataset` folder:
-
-```
-- ./Dataset/amazon(yelp/movielens/gowalla)
-|--- sequence    # user behavior sequences (List)
-|--- test_dict    # test item for each users (Dict)
-|--- trn_mat_time    # user-item graphs in different periods (sparse matrix)
-|--- tst_int    # users to be test (List)
-```
-
-### Original Data
-
-The original data of our dataset can be found from following links (thanks to their work):
-
-- Yelp: https://www.yelp.com/dataset
-- Amazon-book: https://cseweb.ucsd.edu/~jmcauley/datasets/amazon/links.html
-- Gowalla: [SNAP: Network datasets: Gowalla (stanford.edu)](https://snap.stanford.edu/data/loc-Gowalla.html)
-- Movielens: [MovieLens 10M Dataset | GroupLens](https://grouplens.org/datasets/movielens/10m/)
-
-### Methods for preprocessing original data
-
-If you want to process your data into the several data files required for SA-GNN (i.e., `sequence`,`test_dict`,`trn_mat_time`,`tst_int`), you can refer to the following code for preprocessing the raw data of Amazon-book:
-
-1. Download the original data file (for example, `amazon_ratings_Books.csv` from links for original datasets) and run [preprocess_to_trnmat.ipynb](./preprocess_to_trnmat.ipynb) to get the `trn_mat_time` and `tst_int` files, as well as other intermediate files (`train.csv`,`test.csv`).
-2. Run [preprocess_to_sequece.ipynb](./preprocess_to_sequence.ipynb), which reads in the intermediate files (`train.csv` and `test.csv`) and finally generates the `sequence` and `test_dict` files.
-
-You are welcome to modify the preprocessing code as needed to suit your data.
-
-## 🚀 Examples to run the codes
-
-You need to create the `./History/` and the `./Models/` directories. The command to train SA-GNN on the Gowalla/MovieLens/Amazon/Yelp dataset is as follows.
-
-- Gowalla
-
-```
-./gowalla.sh > ./gowalla.log 
-```
-
-- MovieLens
-
-```
-./movielens.sh > ./movielens.log 
-```
-
-- Amazon
-
-```
-./amazon.sh > ./amazon.log 
-```
-
-- Yelp
-
-```
-./yelp.sh > ./yelp.log
-```
-
-## 🌟 Citation
-
-If you find this work is helpful to your research, please consider citing our paper:
-
-```bibtex
-@article{liu2024selfgnn,
-  title={SelfGNN: Self-Supervised Graph Neural Networks for Sequential Recommendation},
-  author={Liu, Yuxi and Xia, Lianghao and Huang, Chao},
-  journal={arXiv preprint arXiv:2405.20878},
-  year={2024}
-}
-```
-
-**Thanks for your interest in our work!**
