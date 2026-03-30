@@ -51,3 +51,5 @@ Thumbs.db
 logs/
 
 *.pt
+Datasets/yelp_dataset
+Datasets/yelp-merchant
