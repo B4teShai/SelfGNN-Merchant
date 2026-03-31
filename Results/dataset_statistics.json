@@ -1,0 +1,38 @@
+{
+  "users": 268653,
+  "merchants": 109325,
+  "total_train_events": 4170201,
+  "unique_pairs": 3980492,
+  "density": 0.013552692192174405,
+  "user_degree": {
+    "min": 3,
+    "max": 2086,
+    "mean": 14.816480739094668,
+    "median": 8.0,
+    "std": 28.38463866628712
+  },
+  "merchant_degree": {
+    "min": 3,
+    "max": 4034,
+    "mean": 38.14498970958152,
+    "median": 14.0,
+    "std": 84.90641569509933
+  },
+  "sequence_length": {
+    "min": 3,
+    "max": 2921,
+    "mean": 15.522629563042289,
+    "median": 8.0,
+    "std": 31.154855251857725
+  },
+  "per_interval_edges": [
+    32561,
+    330450,
+    914624,
+    1540756,
+    1213684
+  ],
+  "test_users": 10000,
+  "val_users": 10000,
+  "time_intervals": 5
+}

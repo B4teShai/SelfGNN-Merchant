@@ -74,6 +74,7 @@ def train_epoch(model, handler, optimizer, device):
 
         optimizer.zero_grad()
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
         optimizer.step()
 
         epoch_loss += loss.item()
@@ -89,7 +90,6 @@ def train_epoch(model, handler, optimizer, device):
 
 @torch.no_grad()
 def evaluate(model, handler, device, mode='test'):
-    """Run evaluation. mode='val' for validation, 'test' for test."""
     model.eval()
     if mode == 'val':
         ids = handler.valUsrs
@@ -145,6 +145,8 @@ def main():
     device = torch.device(args.device if torch.cuda.is_available() else 'cpu')
     print(f'Device: {device}')
     print(f'Dataset: {args.data}')
+    print(f'Edge features: {args.use_edge_features}')
+    print(f'Node features: {args.use_node_features}')
 
     handler = DataHandler(args)
     handler.load_data()
@@ -152,15 +154,26 @@ def main():
     sub_adj = [handler.sub_adj[k].to(device) for k in range(args.graphNum)]
     sub_adj_t = [handler.sub_adj_t[k].to(device) for k in range(args.graphNum)]
 
-    model = SelfGNN(args, sub_adj, sub_adj_t).to(device)
+    user_features = None
+    merchant_features = None
+    if args.use_node_features and handler.user_features is not None:
+        user_features = handler.user_features.to(device)
+        merchant_features = handler.merchant_features.to(device)
+
+    model = SelfGNN(args, sub_adj, sub_adj_t,
+                    user_features=user_features,
+                    merchant_features=merchant_features).to(device)
     total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f'Trainable parameters: {total_params:,}')
 
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
     scheduler = optim.lr_scheduler.ExponentialLR(optimizer, gamma=args.decay)
 
-    os.makedirs('History', exist_ok=True)
-    os.makedirs('Models', exist_ok=True)
+    _script_dir = os.path.dirname(os.path.abspath(__file__))
+    _results_dir = os.path.join(_script_dir, '..', 'Results')
+    _models_dir = os.path.join(_script_dir, 'Models')
+    os.makedirs(_results_dir, exist_ok=True)
+    os.makedirs(_models_dir, exist_ok=True)
 
     has_val = len(handler.valUsrs) > 0
 
@@ -168,6 +181,7 @@ def main():
     best_val_results = {}
     best_epoch = 0
     patience_counter = 0
+    train_history = []
 
     print('=' * 70)
     print(f'Training for {args.epoch} epochs (eval every {args.tstEpoch})')
@@ -183,7 +197,6 @@ def main():
         print(f'Epoch {ep}/{args.epoch} | Loss={loss:.4f} preLoss={pre_loss:.4f} '
               f'| {t1-t0:.1f}s | lr={scheduler.get_last_lr()[0]:.6f}')
 
-        # ---- Evaluation ----
         if ep % args.tstEpoch == 0:
             if has_val:
                 val_results = evaluate(model, handler, device, mode='val')
@@ -194,32 +207,43 @@ def main():
                     best_val_results = val_results.copy()
                     best_epoch = ep
                     patience_counter = 0
-                    torch.save(model.state_dict(), f'Models/{args.save_path}.pt')
+                    torch.save(model.state_dict(),
+                               os.path.join(_models_dir, f'{args.save_path}.pt'))
                     print(f'  >>> New best Val NDCG@10={best_val_ndcg:.4f}. Model saved.')
                 else:
                     patience_counter += 1
                     print(f'  No improvement. Patience: {patience_counter}/{args.patience}')
 
+                train_history.append({
+                    'epoch': ep, 'loss': loss,
+                    'val_HR10': val_results.get('HR@10', 0),
+                    'val_NDCG10': val_results.get('NDCG@10', 0),
+                })
+
                 if patience_counter >= args.patience:
                     print(f'\nEarly stopping at epoch {ep}.')
                     break
             else:
-                # No validation: save based on test (not ideal but fallback)
                 test_results = evaluate(model, handler, device, mode='test')
                 print(f'  Test: {fmt(test_results)}')
                 if test_results.get('NDCG@10', 0) > best_val_ndcg:
                     best_val_ndcg = test_results['NDCG@10']
                     best_val_results = test_results.copy()
                     best_epoch = ep
-                    torch.save(model.state_dict(), f'Models/{args.save_path}.pt')
+                    torch.save(model.state_dict(),
+                               os.path.join(_models_dir, f'{args.save_path}.pt'))
                     print(f'  >>> New best. Model saved.')
+                train_history.append({
+                    'epoch': ep, 'loss': loss,
+                    'val_HR10': test_results.get('HR@10', 0),
+                    'val_NDCG10': test_results.get('NDCG@10', 0),
+                })
         print()
 
-    # ---- Final Test with best model ----
     print('=' * 70)
     print(f'Loading best model from epoch {best_epoch}...')
-    model.load_state_dict(torch.load(f'Models/{args.save_path}.pt',
-                                      map_location=device))
+    model.load_state_dict(torch.load(
+        os.path.join(_models_dir, f'{args.save_path}.pt'), map_location=device))
 
     if has_val:
         print(f'Best Val (epoch {best_epoch}): {fmt(best_val_results)}')
@@ -229,21 +253,22 @@ def main():
     print(f'  Test: {fmt(test_results)}')
 
     if has_val:
-        print(f'\nFinal Val Evaluation (sanity check):')
+        print('\nFinal Val Evaluation (sanity check):')
         val_results = evaluate(model, handler, device, mode='val')
         print(f'  Val:  {fmt(val_results)}')
 
-    # Save results
     import json
     result_log = {
         'best_epoch': best_epoch,
-        'best_val': best_val_results,
-        'final_test': test_results,
+        'val_results': best_val_results,
+        'test_results': test_results,
         'args': vars(args),
+        'train_history': train_history,
     }
-    with open(f'History/{args.save_path}_results.json', 'w') as f:
+    result_path = os.path.join(_results_dir, f'{args.save_path}.json')
+    with open(result_path, 'w') as f:
         json.dump(result_log, f, indent=2, default=str)
-    print(f'\nResults saved to History/{args.save_path}_results.json')
+    print(f'\nResults saved to {result_path}')
 
 
 if __name__ == '__main__':

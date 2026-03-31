@@ -21,7 +21,8 @@ def build_sparse_adj(mat, shape):
 class DataHandler:
     def __init__(self, args):
         self.args = args
-        self.predir = './Datasets/' + args.data + '/'
+        _script_dir = os.path.dirname(os.path.abspath(__file__))
+        self.predir = os.path.join(_script_dir, '..', 'Datasets', args.data) + os.sep
 
     def load_data(self):
         args = self.args
@@ -121,10 +122,19 @@ class DataHandler:
 
     def neg_sample(self, label_row, samp_size, num_items, exclude):
         negs = []
-        while len(negs) < samp_size:
+        max_tries = num_items * 3
+        tries = 0
+        while len(negs) < samp_size and tries < max_tries:
             r = np.random.randint(num_items)
             if label_row[r] == 0 and r not in exclude:
                 negs.append(r)
+            tries += 1
+        # Pad with last found item if sampling exhausted (very dense users)
+        if negs:
+            while len(negs) < samp_size:
+                negs.append(negs[-1])
+        else:
+            negs = [np.random.randint(num_items)] * samp_size
         return negs
 
     def sample_train_batch(self, bat_ids):

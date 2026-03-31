@@ -127,16 +127,17 @@ class SelfGNN(nn.Module):
 
     def sequence_encode(self, final_item, sequences, masks, keep_rate):
         B = sequences.shape[0]
-        seq_emb = final_item[sequences]
-        pos_emb = self.pos_embed.unsqueeze(0).expand(B, -1, -1)
-        mask_3d = masks.unsqueeze(1)
-        seq_out = self.ln_seq(torch.bmm(mask_3d, seq_emb))
-        seq_out = seq_out + self.ln_seq_pos(torch.bmm(mask_3d, pos_emb))
-        att = seq_out
+        seq_emb = final_item[sequences]                          # (B, L, d)
+        pos_emb = self.pos_embed.unsqueeze(0).expand(B, -1, -1) # (B, L, d)
+        mask_exp = masks.unsqueeze(-1)                           # (B, L, 1)
+        # Normalize per-position and zero out padding
+        att = (self.ln_seq(seq_emb) + self.ln_seq_pos(pos_emb)) * mask_exp
+        # Multi-head self-attention over the full sequence, re-mask after each layer
         for i in range(self.att_layers):
             att_new = self.seq_mhsa[i](self.ln_seq_layers[i](att))
-            att = self.leaky_relu(att_new) + att
-        return att.squeeze(1)
+            att = (self.leaky_relu(att_new) + att) * mask_exp
+        # Masked sum pooling -> (B, d)
+        return att.sum(dim=1)
 
     def forward(self, uids, iids, sequences, masks, u_locs_seq, keep_rate,
                 su_locs=None, si_locs=None):
